@@ -1,0 +1,6 @@
+torch==2.3.1
+transformers==4.41.2
+pyyaml==6.0.1
+scikit-learn==1.4.2
+tqdm==4.66.2
+pandas==2.2.2
