@@ -26,6 +26,10 @@ train:
   neg_k: 3
   grad_accum_steps: 1
   fp16: true
+  sample_ratio: 0.1   # use 10% of training impressions for quick demo
+  log_interval: 100   # steps between loss logs
+  save_every_steps: 500  # set 0 or null to disable
 
 eval:
   batch_size: 32
+  sample_ratio: 1.0   # keep full dev by default

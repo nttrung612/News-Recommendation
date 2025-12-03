@@ -1,7 +1,7 @@
 import argparse
 import random
 from pathlib import Path
-from typing import Dict
+from typing import Dict, Tuple
 
 import numpy as np
 import torch
@@ -46,10 +46,16 @@ def train_epoch(
     device: torch.device,
     scaler: GradScaler,
     grad_accum_steps: int,
-) -> float:
+    log_interval: int,
+    save_every_steps: int,
+    start_step: int,
+    save_fn,
+) -> tuple[float, int]:
     model.train()
     total_loss = 0.0
+    running_loss = 0.0
     optimizer.zero_grad()
+    global_step = start_step
     for step, batch in enumerate(tqdm(dataloader, desc="Train", leave=False)):
         batch = move_batch_to_device(batch, device)
         targets = batch["labels"].argmax(dim=1)  # (batch,)
@@ -67,7 +73,16 @@ def train_epoch(
             scheduler.step()
 
         total_loss += loss.item() * grad_accum_steps
-    return total_loss / len(dataloader)
+        running_loss += loss.item() * grad_accum_steps
+        if (step + 1) % log_interval == 0:
+            avg = running_loss / log_interval
+            tqdm.write(f"Step {step+1}/{len(dataloader)} - loss: {avg:.4f}")
+            running_loss = 0.0
+
+        global_step += 1
+        if save_every_steps and global_step % save_every_steps == 0:
+            save_fn(global_step)
+    return total_loss / len(dataloader), global_step
 
 
 @torch.no_grad()
@@ -84,6 +99,16 @@ def evaluate(model: RecModelBase, dataloader: DataLoader, device: torch.device) 
             all_preds.append(scores[i, :valid_len].tolist())
             all_labels.append(batch["labels"][i, :valid_len].tolist())
     return impression_auc(all_preds, all_labels)
+
+
+def subsample_dataset(dataset, ratio: float):
+    if ratio >= 1.0:
+        return dataset
+    subset_size = max(1, int(len(dataset) * ratio))
+    indices = random.sample(range(len(dataset)), subset_size)
+    if hasattr(dataset, "samples"):
+        dataset.samples = [dataset.samples[i] for i in indices]
+    return dataset
 
 
 def get_dataloaders(cfg: Dict, tokenizer, device: torch.device):
@@ -111,6 +136,9 @@ def get_dataloaders(cfg: Dict, tokenizer, device: torch.device):
         dev_news.news2idx,
         cfg["data"]["max_history"],
     )
+
+    train_ds = subsample_dataset(train_ds, cfg["train"].get("sample_ratio", 1.0))
+    dev_ds = subsample_dataset(dev_ds, cfg["eval"].get("sample_ratio", 1.0))
 
     train_collate = MindTrainCollator(train_news, cfg["data"]["max_history"], cfg["train"]["neg_k"])
     dev_collate = MindEvalCollator(dev_news, cfg["data"]["max_history"])
@@ -161,8 +189,27 @@ def main(config_path: str):
     scaler = GradScaler(enabled=cfg["train"].get("fp16", False) and device.type == "cuda")
 
     best_auc = 0.0
+    global_step = 0
+    ckpt_path = Path("checkpoints")
+    ckpt_path.mkdir(parents=True, exist_ok=True)
     for epoch in range(1, cfg["train"]["epochs"] + 1):
-        train_loss = train_epoch(
+        def save_fn(step: int, current_epoch=epoch):
+            save_path = ckpt_path / f"epoch{current_epoch}_step{step}.pt"
+            torch.save(
+                {
+                    "model_state": model.state_dict(),
+                    "config": cfg,
+                    "model_config": model_cfg,
+                    "tokenizer_name": tokenizer_name,
+                    "best_auc": best_auc,
+                    "global_step": step,
+                    "epoch": current_epoch,
+                },
+                save_path,
+            )
+            tqdm.write(f"Saved periodic checkpoint to {save_path}")
+
+        train_loss, global_step = train_epoch(
             model,
             train_loader,
             optimizer,
@@ -170,13 +217,15 @@ def main(config_path: str):
             device,
             scaler,
             cfg["train"]["grad_accum_steps"],
+            cfg["train"].get("log_interval", 100),
+            cfg["train"].get("save_every_steps", 0),
+            global_step,
+            save_fn,
         )
         dev_auc = evaluate(model, dev_loader, device)
         print(f"Epoch {epoch} | train_loss={train_loss:.4f} | dev_auc={dev_auc:.4f}")
         if dev_auc > best_auc:
             best_auc = dev_auc
-            ckpt_path = Path("checkpoints")
-            ckpt_path.mkdir(parents=True, exist_ok=True)
             save_path = ckpt_path / f"fastformer_epoch{epoch}_auc{dev_auc:.4f}.pt"
             torch.save(
                 {
@@ -184,6 +233,9 @@ def main(config_path: str):
                     "config": cfg,
                     "model_config": model_cfg,
                     "tokenizer_name": tokenizer_name,
+                    "best_auc": best_auc,
+                    "global_step": global_step,
+                    "epoch": epoch,
                 },
                 save_path,
             )
