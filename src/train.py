@@ -35,7 +35,7 @@ def set_seed(seed: int) -> None:
 
 
 def move_batch_to_device(batch: Dict[str, torch.Tensor], device: torch.device) -> Dict[str, torch.Tensor]:
-    return {k: (v.to(device) if torch.is_tensor(v) else v) for k, v in batch.items()}
+    return {k: (v.to(device, non_blocking=True) if torch.is_tensor(v) else v) for k, v in batch.items()}
 
 
 def train_epoch(
@@ -86,7 +86,7 @@ def evaluate(model: RecModelBase, dataloader: DataLoader, device: torch.device) 
     return impression_auc(all_preds, all_labels)
 
 
-def get_dataloaders(cfg: Dict, tokenizer):
+def get_dataloaders(cfg: Dict, tokenizer, device: torch.device):
     train_news = load_news_tensors(
         cfg["data"]["train_news"],
         tokenizer,
@@ -115,12 +115,14 @@ def get_dataloaders(cfg: Dict, tokenizer):
     train_collate = MindTrainCollator(train_news, cfg["data"]["max_history"], cfg["train"]["neg_k"])
     dev_collate = MindEvalCollator(dev_news, cfg["data"]["max_history"])
 
+    use_pin_memory = device.type == "cuda"
     train_loader = DataLoader(
         train_ds,
         batch_size=cfg["train"]["batch_size"],
         shuffle=True,
         num_workers=cfg["train"]["num_workers"],
         collate_fn=train_collate,
+        pin_memory=use_pin_memory,
     )
     dev_loader = DataLoader(
         dev_ds,
@@ -128,6 +130,7 @@ def get_dataloaders(cfg: Dict, tokenizer):
         shuffle=False,
         num_workers=cfg["train"]["num_workers"],
         collate_fn=dev_collate,
+        pin_memory=use_pin_memory,
     )
 
     return train_loader, dev_loader
@@ -137,11 +140,13 @@ def main(config_path: str):
     cfg = load_config(config_path)
     set_seed(cfg.get("seed", 42))
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    if device.type == "cuda":
+        torch.backends.cudnn.benchmark = True  # optimize conv kernels for fixed input sizes
     model_cfg = cfg["model"]
     tokenizer_name = model_cfg.get("tokenizer_name", model_cfg.get("pretrained_model_name"))
     tokenizer = load_tokenizer(tokenizer_name)
 
-    train_loader, dev_loader = get_dataloaders(cfg, tokenizer)
+    train_loader, dev_loader = get_dataloaders(cfg, tokenizer, device)
 
     model = build_model(model_cfg).to(device)
 
