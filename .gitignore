@@ -7,6 +7,10 @@ src/models/__pycache__/
 src/utils/__pycache__/
 *.py[cod]
 *$py.class
+*.pyc
+*.pyo
+*.pyd
+data/MINDlarge_test/
 
 # Virtual environments
 .venv/
@@ -24,6 +28,8 @@ data/cache/
 # Checkpoints and outputs
 checkpoints/
 predictions.jsonl
+prediction.txt
+prediction.zip
 
 # OS / editor
 .DS_Store

@@ -45,6 +45,18 @@ python -m src.inference \
 ```
 Output mỗi dòng JSON: `{"impression_id": "...", "ranking": [["N123", score], ...]}` đã sắp xếp giảm dần theo điểm.
 
+### Tạo file submission (prediction.txt + zip) cho MIND test
+```bash
+python -m scripts.predict_submission \
+  --config configs/default.yaml \
+  --checkpoint checkpoints/fastformer_epoch1_auc0.0xxx.pt \
+  --behaviors data/MINDlarge_test/behaviors.tsv \
+  --news data/MINDlarge_test/news.tsv \
+  --output_txt prediction.txt \
+  --output_zip prediction.zip
+```
+`prediction.txt` format: mỗi dòng `<impression_id> [r1,r2,...,rk]` trong đó `ri` là thứ hạng (1 = cao nhất) của candidate i theo đúng thứ tự ứng viên trong behaviors.tsv. Ví dụ: `24481 [4,1,3,2]`. File sẽ được nén thành `prediction.zip` để nộp.
+
 ## Ghi chú triển khai
 - Collate đã chèn comment về shape (history: `(B, H, L)`, candidates: `(B, K, L)`), padding news id = 0; cung cấp thêm `history_mask`, `candidate_mask`, category/subcategory cho model cần thêm feature.
 - Negative sampling thực hiện online khi đọc behaviors (một positive + `neg_k` negative cho mỗi impression có click).
