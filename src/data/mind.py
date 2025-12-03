@@ -52,7 +52,13 @@ def load_news_tensors(
         cache_dir_path.mkdir(parents=True, exist_ok=True)
         cache_file = cache_dir_path / f"{news_path.stem}_{tokenizer.name_or_path.replace('/', '_')}_{max_len}_{cache_version}.pt"
         if cache_file.exists():
-            return torch.load(cache_file)
+            # torch>=2.6 defaults to weights_only=True; allow NewsTensorStore class
+            try:
+                torch.serialization.add_safe_globals([NewsTensorStore])
+                return torch.load(cache_file, weights_only=False)
+            except TypeError:
+                # fallback for older torch versions without weights_only arg
+                return torch.load(cache_file)
 
     columns = [
         "news_id",

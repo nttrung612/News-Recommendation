@@ -1,7 +1,7 @@
 --extra-index-url https://download.pytorch.org/whl/cu121
 torch==2.3.1
-transformers==4.41.2
-pyyaml==6.0.1
-scikit-learn==1.4.2
-tqdm==4.66.2
-pandas==2.2.2
+transformers>=4.43.0,<5.0.0
+pyyaml>=6.0.1
+scikit-learn>=1.5.0
+tqdm>=4.66.4
+pandas>=2.2.2

@@ -6,9 +6,10 @@ from typing import Dict
 import numpy as np
 import torch
 import torch.nn.functional as F
+from torch.optim import AdamW
 from torch.utils.data import DataLoader
 from tqdm import tqdm
-from transformers import AdamW, get_linear_schedule_with_warmup
+from transformers import get_linear_schedule_with_warmup
 from torch.cuda.amp import autocast, GradScaler
 
 from src.config.config import load_config
