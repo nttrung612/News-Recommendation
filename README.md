@@ -9,8 +9,13 @@ Mặc định dùng `data/MINDsmall_train` và `data/MINDsmall_dev` đã có s�
 ```bash
 python -m venv .venv
 source .venv/bin/activate
+# GPU (CUDA 12.x, ví dụ RTX 5080/4090/A100...):
+# cài PyTorch GPU từ index chính hãng, requirements đã thêm extra-index-url:
 pip install -r requirements.txt
-# cần sẵn mô hình Hugging Face (vd. bert-base-uncased) trong cache khi không có mạng
+# nếu muốn chỉ cài torch trước:
+# pip install --index-url https://download.pytorch.org/whl/cu121 torch==2.3.1
+# sau đó: pip install -r requirements.txt --no-deps
+# cần sẵn mô hình Hugging Face (vd. distilroberta-base) trong cache nếu không có mạng
 ```
 
 ## Cấu hình
