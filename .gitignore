@@ -11,6 +11,7 @@ src/utils/__pycache__/
 *.pyo
 *.pyd
 data/MINDlarge_test/
+wandb/
 
 # Virtual environments
 .venv/
