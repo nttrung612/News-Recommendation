@@ -46,6 +46,7 @@ train:
 eval:
   batch_size: 32
   sample_ratio: 0.05   # evaluate on full dev; lower for quick debug
+  log_train_auc: true
 
 wandb:
   enable: true

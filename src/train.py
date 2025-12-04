@@ -203,6 +203,14 @@ def get_dataloaders(cfg: Dict, tokenizer, device: torch.device):
         worker_init_fn=seed_worker,
         generator=generator,
     )
+    train_eval_loader = DataLoader(
+        train_ds,
+        batch_size=cfg["eval"]["batch_size"],
+        shuffle=False,
+        num_workers=cfg["train"]["num_workers"],
+        collate_fn=train_collate,
+        pin_memory=use_pin_memory,
+    )
     dev_loader = DataLoader(
         dev_ds,
         batch_size=cfg["eval"]["batch_size"],
@@ -212,7 +220,7 @@ def get_dataloaders(cfg: Dict, tokenizer, device: torch.device):
         pin_memory=use_pin_memory,
     )
 
-    return train_loader, dev_loader, train_news, dev_news
+    return train_loader, train_eval_loader, dev_loader, train_news, dev_news
 
 
 def main(config_path: str):
@@ -227,7 +235,7 @@ def main(config_path: str):
     tokenizer_name = model_cfg.get("tokenizer_name", model_cfg.get("pretrained_model_name"))
     tokenizer = load_tokenizer(tokenizer_name)
 
-    train_loader, dev_loader, train_news, dev_news = get_dataloaders(cfg, tokenizer, device)
+    train_loader, train_eval_loader, dev_loader, train_news, dev_news = get_dataloaders(cfg, tokenizer, device)
 
     # tie vocab sizes to what was seen in training/dev to keep embeddings aligned for eval/inference
     default_cat_cap = 0 if model_cfg.get("category_dim", 0) <= 0 else model_cfg.get("category_vocab_size", 500)
@@ -312,12 +320,21 @@ def main(config_path: str):
             save_fn,
             wandb_log_fn,
         )
+        train_auc = None
+        if cfg["eval"].get("log_train_auc", True):
+            train_auc = evaluate(model, train_eval_loader, device)
         dev_auc = evaluate(model, dev_loader, device)
-        print(f"Epoch {epoch} | train_loss={train_loss:.4f} | dev_auc={dev_auc:.4f}")
+        if train_auc is None:
+            epoch_msg = f"Epoch {epoch} | train_loss={train_loss:.4f} | dev_auc={dev_auc:.4f}"
+        else:
+            epoch_msg = f"Epoch {epoch} | train_loss={train_loss:.4f} | train_auc={train_auc:.4f} | dev_auc={dev_auc:.4f}"
+        tqdm.write(epoch_msg)
+        print(epoch_msg)
         if wandb_log_fn is not None:
             wandb_log_fn(
                 {
                     "train/epoch_loss": train_loss,
+                    "train/auc": train_auc if train_auc is not None else None,
                     "eval/auc": dev_auc,
                     "epoch": epoch,
                     "lr": scheduler.get_last_lr()[0],
