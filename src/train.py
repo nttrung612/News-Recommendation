@@ -23,6 +23,7 @@ from src.data.mind import (
     load_tokenizer,
 )
 import src.models.fastformer  # register fastformer
+import src.models.nrms  # register nrms
 from src.models.base import RecModelBase
 from src.models.registry import build_model
 from src.utils.metrics import impression_auc

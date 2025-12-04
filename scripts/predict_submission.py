@@ -9,6 +9,7 @@ from tqdm import tqdm
 from src.config.config import load_config
 from src.data.mind import MindEvalCollator, MindEvalDataset, load_news_tensors, load_tokenizer
 import src.models.fastformer  # register fastformer
+import src.models.nrms  # register nrms
 from src.models.registry import build_model
 
 

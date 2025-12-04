@@ -33,7 +33,9 @@ python -m src.train --config configs/default.yaml
 - Log W&B (tùy chọn): cài `wandb` (`pip install wandb` hoặc `pip install -r requirements.txt`), chỉnh `wandb.enable=true` trong config. Khi chạy, loss (log_interval) và AUC theo epoch sẽ được đẩy lên dashboard.
 
 - Loader parse `news.tsv` → tokenize (title + abstract), cache (có kèm category/subcategory id cho các model như NAML), padding row = 0; `behaviors.tsv` → lịch sử + impressions, negative sampling.
-- Model registry: `src/models/registry.py` xây model từ `model.name`. Fastformer hiện tại = NewsEncoder (pretrained LM + projection) + FastformerAggregator (global query/key additive attention) → user vector; scorer = dot-product.
+- Model registry: `src/models/registry.py` xây model từ `model.name`.
+  - `fastformer`: Fastformer pooling cho token và user.
+  - `nrms`: Multi-head self-attention token-level + self-attention user-level (NRMS), pooled bằng additive attention; scorer = dot-product.
 - Collator trả tensor kèm comment shape: history `(B,H,L)`, candidates `(B,K,L)`, mask/indices, category/subcategory nếu có.
 - Tiêu chí in ra: loss train và AUC trên dev. Checkpoint tốt nhất lưu ở `checkpoints/`, kèm `model_config` + `tokenizer_name`.
 
