@@ -2,7 +2,7 @@ import argparse
 import math
 import random
 from pathlib import Path
-from typing import Dict, Callable, Optional
+from typing import Dict, Callable, Optional, Tuple
 
 import numpy as np
 import torch
@@ -24,6 +24,7 @@ from src.data.mind import (
 )
 import src.models.fastformer  # register fastformer
 import src.models.nrms  # register nrms
+import src.models.unbert  # register unbert
 from src.models.base import RecModelBase
 from src.models.registry import build_model
 from src.utils.metrics import impression_auc
@@ -49,6 +50,17 @@ def move_batch_to_device(batch: Dict[str, torch.Tensor], device: torch.device) -
     return {k: (v.to(device, non_blocking=True) if torch.is_tensor(v) else v) for k, v in batch.items()}
 
 
+def unpack_model_output(output) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
+    """
+    Handle models that return scores tensor or dict with scores and optional aux loss.
+    """
+    if isinstance(output, dict):
+        scores = output.get("scores")
+        aux = output.get("contrastive_loss")
+        return scores, aux
+    return output, None
+
+
 def train_epoch(
     model: RecModelBase,
     dataloader: DataLoader,
@@ -63,6 +75,7 @@ def train_epoch(
     start_step: int,
     save_fn,
     log_fn: Optional[Callable[[Dict[str, float], int], None]] = None,
+    aux_loss_weight: float = 0.0,
 ) -> tuple[float, int]:
     model.train()
     total_loss = 0.0
@@ -76,8 +89,11 @@ def train_epoch(
         targets = batch["labels"].argmax(dim=1)  # (batch,)
 
         with autocast(enabled=scaler.is_enabled()):
-            scores = model(batch)  # (batch, neg_k + 1)
+            output = model(batch)
+            scores, aux_loss = unpack_model_output(output)  # (batch, neg_k + 1)
             loss = F.cross_entropy(scores, targets)
+            if aux_loss is not None and aux_loss_weight > 0:
+                loss = loss + aux_loss_weight * aux_loss
             loss = loss / grad_accum_steps
 
         scaler.scale(loss).backward()
@@ -114,7 +130,8 @@ def evaluate(model: RecModelBase, dataloader: DataLoader, device: torch.device) 
     all_preds, all_labels = [], []
     for batch in tqdm(dataloader, desc="Eval", leave=False):
         batch = move_batch_to_device(batch, device)
-        scores = model(batch)  # (batch, max_cand)
+        output = model(batch)
+        scores, _ = unpack_model_output(output)  # (batch, max_cand)
         # mask out padded candidates
         scores = scores.masked_fill(~batch["candidate_mask"], float("-inf"))
         for i in range(scores.size(0)):
@@ -286,9 +303,11 @@ def main(config_path: str):
     global_step = 0
     ckpt_path = Path("checkpoints")
     ckpt_path.mkdir(parents=True, exist_ok=True)
+    from datetime import datetime
+    run_ts = datetime.now().strftime("%Y%m%d_%H%M%S")
     for epoch in range(1, cfg["train"]["epochs"] + 1):
         def save_fn(step: int, current_epoch=epoch):
-            save_path = ckpt_path / f"epoch{current_epoch}_step{step}.pt"
+            save_path = ckpt_path / f"{run_ts}_epoch{current_epoch}_step{step}.pt"
             torch.save(
                 {
                     "model_state": model.state_dict(),
@@ -319,6 +338,7 @@ def main(config_path: str):
             global_step,
             save_fn,
             wandb_log_fn,
+            cfg["train"].get("aux_loss_weight", model_cfg.get("contrastive_weight", 0.0)),
         )
         train_auc = None
         if cfg["eval"].get("log_train_auc", True):
@@ -343,7 +363,7 @@ def main(config_path: str):
             )
         if dev_auc > best_auc:
             best_auc = dev_auc
-            save_path = ckpt_path / f"fastformer_epoch{epoch}_auc{dev_auc:.4f}.pt"
+            save_path = ckpt_path / f"{run_ts}_{model_cfg.get('name','model')}_epoch{epoch}_auc{dev_auc:.4f}.pt"
             torch.save(
                 {
                     "model_state": model.state_dict(),

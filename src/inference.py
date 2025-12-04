@@ -10,6 +10,7 @@ from src.config.config import load_config
 from src.data.mind import MindEvalCollator, MindEvalDataset, load_news_tensors, load_tokenizer
 import src.models.fastformer  # register fastformer
 import src.models.nrms  # register nrms
+import src.models.unbert  # register unbert
 from src.models.registry import build_model
 
 
@@ -69,7 +70,8 @@ def main():
         for batch in tqdm(dataloader, desc="Infer"):
             # Move tensor parts to device
             tensor_batch = {k: (v.to(device) if torch.is_tensor(v) else v) for k, v in batch.items()}
-            scores = model(tensor_batch)  # (batch, max_cand)
+            output = model(tensor_batch)
+            scores = output["scores"] if isinstance(output, dict) else output  # (batch, max_cand)
             scores = scores.masked_fill(~tensor_batch["candidate_mask"], float("-inf"))
             for i in range(scores.size(0)):
                 valid_len = int(tensor_batch["candidate_mask"][i].sum().item())
