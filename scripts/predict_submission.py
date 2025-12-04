@@ -52,13 +52,15 @@ def main():
         max_history=data_cfg["max_history"],
     )
     collate = MindEvalCollator(news_store, data_cfg["max_history"])
+    num_workers = 0 if device.type == "cuda" else cfg["train"]["num_workers"]
+    pin_memory = False if news_store.input_ids.is_cuda else (device.type == "cuda")
     dataloader = DataLoader(
         dataset,
         batch_size=cfg["eval"]["batch_size"],
         shuffle=False,
-        num_workers=cfg["train"]["num_workers"],
+        num_workers=num_workers,
         collate_fn=collate,
-        pin_memory=device.type == "cuda",
+        pin_memory=pin_memory,
     )
 
     model = build_model(model_cfg).to(device)
