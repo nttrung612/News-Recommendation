@@ -6,30 +6,33 @@ data:
   dev_behaviors: data/MINDsmall_dev/behaviors.tsv
   dev_news: data/MINDsmall_dev/news.tsv
   cache_dir: data/cache
-  max_history: 20
-  max_seq_len: 32
+  max_history: 30
+  max_seq_len: 48
 
 model:
   name: fastformer  # registry key; can swap to other models later
   pretrained_model_name: distilroberta-base  # smaller encoder for 4GB VRAM
   tokenizer_name: distilroberta-base
-  embed_dim: 192
+  embed_dim: 256
   dropout: 0.2
+  use_token_fastformer: true  # token-level pooling instead of plain [CLS]
+  category_dim: 32            # set 0 to disable category embedding
+  subcategory_dim: 16         # set 0 to disable subcategory embedding
 
 train:
-  batch_size: 8
+  batch_size: 32
   num_workers: 4
-  epochs: 2
-  learning_rate: 2.0e-5
+  epochs: 5
+  learning_rate: 2.5e-5
   weight_decay: 0.01
   warmup_steps: 0
-  neg_k: 3
+  neg_k: 4
   grad_accum_steps: 1
   fp16: true
-  sample_ratio: 0.05   # use 10% of training impressions for quick demo
-  log_interval: 500   # steps between loss logs
-  save_every_steps: 1000  # set 0 or null to disable
+  sample_ratio: 1   # use 10% of training impressions for quick demo
+  log_interval: 100   # steps between loss logs
+  save_every_steps: 500  # set 0 or null to disable
 
 eval:
   batch_size: 4
-  sample_ratio: 0.05   # keep full dev by default
+  sample_ratio: 1   # keep full dev by default
