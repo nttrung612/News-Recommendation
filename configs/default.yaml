@@ -6,7 +6,7 @@ data:
   dev_behaviors: data/MINDsmall_dev/behaviors.tsv
   dev_news: data/MINDsmall_dev/news.tsv
   cache_dir: data/cache
-  max_history: 30
+  max_history: 25
   max_seq_len: 48
 
 model:
@@ -20,7 +20,7 @@ model:
   subcategory_dim: 16         # set 0 to disable subcategory embedding
 
 train:
-  batch_size: 32
+  batch_size: 8
   num_workers: 4
   epochs: 5
   learning_rate: 2.5e-5
@@ -29,10 +29,10 @@ train:
   neg_k: 4
   grad_accum_steps: 1
   fp16: true
-  sample_ratio: 1   # use 10% of training impressions for quick demo
+  sample_ratio: 0.1   # use 10% of training impressions for quick demo
   log_interval: 100   # steps between loss logs
   save_every_steps: 500  # set 0 or null to disable
 
 eval:
   batch_size: 4
-  sample_ratio: 1   # keep full dev by default
+  sample_ratio: 0.1   # use 10% of dev impressions for quick demo
