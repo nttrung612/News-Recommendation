@@ -2,7 +2,7 @@ import csv
 import random
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, List, Tuple
+from typing import Dict, List, Optional
 
 import pandas as pd
 import torch
@@ -22,6 +22,8 @@ class NewsTensorStore:
     idx2news: List[str]
     category_ids: torch.Tensor | None = None  # (num_news + 1,)
     subcategory_ids: torch.Tensor | None = None  # (num_news + 1,)
+    category_vocab: Dict[str, int] | None = None
+    subcategory_vocab: Dict[str, int] | None = None
 
 
 def load_tokenizer(model_name: str) -> AutoTokenizer:
@@ -29,8 +31,26 @@ def load_tokenizer(model_name: str) -> AutoTokenizer:
     Load a Hugging Face tokenizer. Requires the model to be available locally
     or downloadable (network).
     """
-    tokenizer = AutoTokenizer.from_pretrained(model_name, use_fast=True)
-    return tokenizer
+    try:
+        return AutoTokenizer.from_pretrained(model_name, use_fast=True)
+    except Exception:
+        # fallback for models whose fast tokenizer is not bundled correctly
+        return AutoTokenizer.from_pretrained(model_name, use_fast=False)
+
+
+def _vocab_compatible(stored_vocab: Optional[Dict[str, int]], reference_vocab: Optional[Dict[str, int]]) -> bool:
+    """
+    Check that overlapping category/subcategory ids match between stored cache and provided vocab.
+    """
+    if reference_vocab is None:
+        return True
+    if stored_vocab is None:
+        return False
+    for key, ref_val in reference_vocab.items():
+        stored_val = stored_vocab.get(key)
+        if stored_val is not None and stored_val != ref_val:
+            return False
+    return True
 
 
 def load_news_tensors(
@@ -38,6 +58,8 @@ def load_news_tensors(
     tokenizer: AutoTokenizer,
     max_len: int,
     cache_dir: str | None = None,
+    category_vocab: Dict[str, int] | None = None,
+    subcategory_vocab: Dict[str, int] | None = None,
 ) -> NewsTensorStore:
     """
     Tokenize news file and return tensors suitable for indexing.
@@ -46,7 +68,7 @@ def load_news_tensors(
     """
     news_path = Path(news_path)
     cache_file = None
-    cache_version = "v2"  # bump to invalidate older cache formats
+    cache_version = "v3"  # bump to invalidate older cache formats
     if cache_dir:
         cache_dir_path = Path(cache_dir)
         cache_dir_path.mkdir(parents=True, exist_ok=True)
@@ -55,10 +77,14 @@ def load_news_tensors(
             # torch>=2.6 defaults to weights_only=True; allow NewsTensorStore class
             try:
                 torch.serialization.add_safe_globals([NewsTensorStore])
-                return torch.load(cache_file, weights_only=False)
+                cached = torch.load(cache_file, weights_only=False)
             except TypeError:
                 # fallback for older torch versions without weights_only arg
-                return torch.load(cache_file)
+                cached = torch.load(cache_file)
+            if _vocab_compatible(getattr(cached, "category_vocab", None), category_vocab) and _vocab_compatible(
+                getattr(cached, "subcategory_vocab", None), subcategory_vocab
+            ):
+                return cached
 
     columns = [
         "news_id",
@@ -87,10 +113,20 @@ def load_news_tensors(
     # categorical features for NAML-style models
     cat_series = df["category"].fillna("uncat")
     subcat_series = df["subcategory"].fillna("unsubcat")
-    cat_vocab = {c: i + 1 for i, c in enumerate(sorted(cat_series.unique()))}
-    subcat_vocab = {c: i + 1 for i, c in enumerate(sorted(subcat_series.unique()))}
-    cat_ids = torch.tensor([cat_vocab[c] for c in cat_series], dtype=torch.long)  # (num_news,)
-    subcat_ids = torch.tensor([subcat_vocab[c] for c in subcat_series], dtype=torch.long)  # (num_news,)
+    cat_vocab = dict(category_vocab) if category_vocab else {}
+    subcat_vocab = dict(subcategory_vocab) if subcategory_vocab else {}
+    cat_ids_list = []
+    for c in cat_series:
+        if c not in cat_vocab:
+            cat_vocab[c] = len(cat_vocab) + 1
+        cat_ids_list.append(cat_vocab[c])
+    subcat_ids_list = []
+    for c in subcat_series:
+        if c not in subcat_vocab:
+            subcat_vocab[c] = len(subcat_vocab) + 1
+        subcat_ids_list.append(subcat_vocab[c])
+    cat_ids = torch.tensor(cat_ids_list, dtype=torch.long)  # (num_news,)
+    subcat_ids = torch.tensor(subcat_ids_list, dtype=torch.long)  # (num_news,)
 
     # prepend padding row to simplify masking later
     pad_row = torch.zeros(1, input_ids.size(1), dtype=torch.long)
@@ -110,6 +146,8 @@ def load_news_tensors(
         idx2news=idx2news,
         category_ids=cat_ids,
         subcategory_ids=subcat_ids,
+        category_vocab=cat_vocab,
+        subcategory_vocab=subcat_vocab,
     )
     if cache_file:
         torch.save(store, cache_file)
@@ -157,12 +195,11 @@ class MindTrainDataset(Dataset):
                 for pos_idx in pos:
                     if not neg:
                         continue  # skip if no negatives to sample
-                    sampled_negs = random.choices(neg, k=self.neg_k) if len(neg) < self.neg_k else random.sample(neg, self.neg_k)
                     self.samples.append(
                         {
                             "history": history_idx,
                             "positive": pos_idx,
-                            "negatives": sampled_negs,
+                            "neg_pool": neg,
                         }
                     )
 
@@ -170,7 +207,14 @@ class MindTrainDataset(Dataset):
         return len(self.samples)
 
     def __getitem__(self, idx: int) -> Dict:
-        return self.samples[idx]
+        sample = self.samples[idx]
+        neg_pool = sample["neg_pool"]
+        negatives = random.sample(neg_pool, self.neg_k) if len(neg_pool) >= self.neg_k else random.choices(neg_pool, k=self.neg_k)
+        return {
+            "history": sample["history"],
+            "positive": sample["positive"],
+            "negatives": negatives,
+        }
 
 
 class MindEvalDataset(Dataset):
@@ -251,9 +295,14 @@ class MindTrainCollator:
                 histories[i, -len(hist) :] = torch.tensor(hist, dtype=torch.long, device=device)
 
         candidates = torch.zeros(batch_size, self.neg_k + 1, dtype=torch.long, device=device)
+        labels = torch.zeros(batch_size, self.neg_k + 1, dtype=torch.long, device=device)
         for i, item in enumerate(batch):
-            candidates[i, 0] = item["positive"]
-            candidates[i, 1:] = torch.tensor(item["negatives"], dtype=torch.long, device=device)
+            cand_tensor = torch.tensor([item["positive"]] + item["negatives"], dtype=torch.long, device=device)
+            perm = torch.randperm(cand_tensor.size(0), device=device)
+            shuffled = cand_tensor[perm]
+            candidates[i] = shuffled
+            pos_idx = int((perm == 0).nonzero(as_tuple=False)[0].item())  # positive was at index 0 before shuffle
+            labels[i, pos_idx] = 1
 
         cand_flat = candidates.view(-1)  # (batch_size * (neg_k + 1))
         cand_input_ids = self.news_store.input_ids[cand_flat].view(batch_size, self.neg_k + 1, seq_len)
@@ -263,9 +312,6 @@ class MindTrainCollator:
         hist_input_ids = self.news_store.input_ids[hist_flat].view(batch_size, self.max_history, seq_len)
         hist_attention = self.news_store.attention_mask[hist_flat].view(batch_size, self.max_history, seq_len)
         history_mask = hist_attention.sum(dim=-1) > 0  # (batch_size, max_history) bool mask
-
-        labels = torch.zeros(batch_size, self.neg_k + 1, dtype=torch.long, device=device)
-        labels[:, 0] = 1  # positive is at index 0
 
         candidate_mask = torch.ones(batch_size, self.neg_k + 1, dtype=torch.bool, device=device)
 

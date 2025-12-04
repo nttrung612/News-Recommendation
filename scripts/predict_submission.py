@@ -30,6 +30,12 @@ def main():
     model_cfg = checkpoint.get("model_config", cfg["model"])
     data_cfg = checkpoint.get("config", cfg)["data"]
     tokenizer_name = checkpoint.get("tokenizer_name", model_cfg.get("tokenizer_name", model_cfg.get("pretrained_model_name")))
+    category_vocab = checkpoint.get("category_vocab")
+    subcategory_vocab = checkpoint.get("subcategory_vocab")
+    if "category_vocab_size" not in model_cfg and category_vocab:
+        model_cfg["category_vocab_size"] = len(category_vocab) + 1
+    if "subcategory_vocab_size" not in model_cfg and subcategory_vocab:
+        model_cfg["subcategory_vocab_size"] = len(subcategory_vocab) + 1
     tokenizer = load_tokenizer(tokenizer_name)
 
     news_store = load_news_tensors(
@@ -37,6 +43,8 @@ def main():
         tokenizer,
         data_cfg["max_seq_len"],
         data_cfg["cache_dir"],
+        category_vocab=category_vocab,
+        subcategory_vocab=subcategory_vocab,
     )
     # move cached tensors to device
     news_store.input_ids = news_store.input_ids.to(device)
