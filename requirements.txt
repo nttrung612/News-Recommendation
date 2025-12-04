@@ -7,3 +7,4 @@ tqdm>=4.66.4
 pandas>=2.2.2
 sentencepiece>=0.1.99
 protobuf>=3.20
+wandb>=0.16.6

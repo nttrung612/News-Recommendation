@@ -46,3 +46,8 @@ train:
 eval:
   batch_size: 128
   sample_ratio: 1.0   # evaluate on full dev; lower for quick debug
+
+wandb:
+  enable: false
+  project: news-rec
+  name:

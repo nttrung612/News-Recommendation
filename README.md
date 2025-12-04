@@ -24,11 +24,14 @@ Chỉnh `configs/default.yaml`:
 - `model.name`: key của model trong registry (hiện có `fastformer`), `pretrained_model_name/tokenizer_name`, `embed_dim`, `dropout`.
 - `train.*`: batch size, lr, `neg_k` (số negative/positive), `epochs`, `fp16`, `grad_accum_steps`.
 - `eval.batch_size`: batch cho dev/inference.
+- `wandb.enable`: bật/tắt log W&B; `wandb.project/name` để đặt project/run name.
 
 ## Huấn luyện & đánh giá
 ```bash
 python -m src.train --config configs/default.yaml
 ```
+- Log W&B (tùy chọn): cài `wandb` (`pip install wandb` hoặc `pip install -r requirements.txt`), chỉnh `wandb.enable=true` trong config. Khi chạy, loss (log_interval) và AUC theo epoch sẽ được đẩy lên dashboard.
+
 - Loader parse `news.tsv` → tokenize (title + abstract), cache (có kèm category/subcategory id cho các model như NAML), padding row = 0; `behaviors.tsv` → lịch sử + impressions, negative sampling.
 - Model registry: `src/models/registry.py` xây model từ `model.name`. Fastformer hiện tại = NewsEncoder (pretrained LM + projection) + FastformerAggregator (global query/key additive attention) → user vector; scorer = dot-product.
 - Collator trả tensor kèm comment shape: history `(B,H,L)`, candidates `(B,K,L)`, mask/indices, category/subcategory nếu có.

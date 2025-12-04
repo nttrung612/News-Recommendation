@@ -2,7 +2,7 @@ import argparse
 import math
 import random
 from pathlib import Path
-from typing import Dict
+from typing import Dict, Callable, Optional
 
 import numpy as np
 import torch
@@ -61,6 +61,7 @@ def train_epoch(
     save_every_steps: int,
     start_step: int,
     save_fn,
+    log_fn: Optional[Callable[[Dict[str, float], int], None]] = None,
 ) -> tuple[float, int]:
     model.train()
     total_loss = 0.0
@@ -97,6 +98,8 @@ def train_epoch(
         if (step + 1) % log_interval == 0:
             avg = running_loss / log_interval
             tqdm.write(f"Step {step+1}/{len(dataloader)} - loss: {avg:.4f}")
+            if log_fn is not None:
+                log_fn({"train/loss": avg}, global_step)
             running_loss = 0.0
 
         if save_every_steps and global_step % save_every_steps == 0:
@@ -255,6 +258,21 @@ def main(config_path: str):
     )
     scaler = GradScaler(enabled=cfg["train"].get("fp16", False) and device.type == "cuda")
 
+    wandb_run = None
+    wandb_log_fn = None
+    wandb_cfg = cfg.get("wandb", {})
+    if wandb_cfg.get("enable", False):
+        try:
+            import wandb
+        except ImportError as e:
+            raise ImportError("wandb is not installed. Please `pip install wandb` or disable wandb in config.") from e
+        wandb_run = wandb.init(
+            project=wandb_cfg.get("project", "news-rec"),
+            name=wandb_cfg.get("name"),
+            config=cfg,
+        )
+        wandb_log_fn = lambda metrics, step=None: wandb.log(metrics, step=step)
+
     best_auc = 0.0
     global_step = 0
     ckpt_path = Path("checkpoints")
@@ -291,9 +309,20 @@ def main(config_path: str):
             cfg["train"].get("save_every_steps", 0),
             global_step,
             save_fn,
+            wandb_log_fn,
         )
         dev_auc = evaluate(model, dev_loader, device)
         print(f"Epoch {epoch} | train_loss={train_loss:.4f} | dev_auc={dev_auc:.4f}")
+        if wandb_log_fn is not None:
+            wandb_log_fn(
+                {
+                    "train/epoch_loss": train_loss,
+                    "eval/auc": dev_auc,
+                    "epoch": epoch,
+                    "lr": scheduler.get_last_lr()[0],
+                },
+                global_step,
+            )
         if dev_auc > best_auc:
             best_auc = dev_auc
             save_path = ckpt_path / f"fastformer_epoch{epoch}_auc{dev_auc:.4f}.pt"
@@ -312,6 +341,8 @@ def main(config_path: str):
                 save_path,
             )
             print(f"Saved new best checkpoint to {save_path}")
+    if wandb_run is not None:
+        wandb_run.finish()
 
 
 if __name__ == "__main__":
