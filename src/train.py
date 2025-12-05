@@ -60,7 +60,6 @@ def unpack_model_output(output) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
         return scores, aux
     return output, None
 
-
 def train_epoch(
     model: RecModelBase,
     dataloader: DataLoader,
@@ -82,49 +81,73 @@ def train_epoch(
     running_loss = 0.0
     optimizer.zero_grad(set_to_none=True)
     global_step = start_step
-    num_batches = len(dataloader)
-    accum_counter = 0
-    for step, batch in enumerate(tqdm(dataloader, desc="Train", leave=False)):
+    
+    # Sửa: Dùng enumerate trực tiếp, không cần num_batches nếu không dùng logic đặc biệt cuối epoch
+    # Accum_counter nên độc lập với loop index
+    accum_steps_done = 0 
+    
+    pbar = tqdm(dataloader, desc="Train", leave=False)
+    for step, batch in enumerate(pbar):
         batch = move_batch_to_device(batch, device)
-        targets = batch["labels"].argmax(dim=1)  # (batch,)
+        targets = batch["labels"].argmax(dim=1)
 
         with autocast(enabled=scaler.is_enabled()):
             output = model(batch)
-            scores, aux_loss = unpack_model_output(output)  # (batch, neg_k + 1)
+            scores, aux_loss = unpack_model_output(output)
             loss = F.cross_entropy(scores, targets)
+            
             if aux_loss is not None and aux_loss_weight > 0:
                 loss = loss + aux_loss_weight * aux_loss
+            
+            # Scale loss for gradient accumulation
             loss = loss / grad_accum_steps
 
         scaler.scale(loss).backward()
-        accum_counter += 1
-        update_now = (accum_counter % grad_accum_steps == 0) or (step + 1 == num_batches)
-        if update_now:
-            if max_grad_norm and max_grad_norm > 0:
+        
+        # Track loss for logging (recover original scale for display)
+        current_loss_val = loss.item() * grad_accum_steps
+        total_loss += current_loss_val
+        running_loss += current_loss_val
+        
+        accum_steps_done += 1
+
+        if accum_steps_done % grad_accum_steps == 0:
+            # Unscale before clipping
+            if max_grad_norm > 0:
                 scaler.unscale_(optimizer)
                 torch.nn.utils.clip_grad_norm_(model.parameters(), max_grad_norm)
+            
+            # Step scaler
+            scale_before = scaler.get_scale()
             scaler.step(optimizer)
             scaler.update()
-            scheduler.step()
+            scale_after = scaler.get_scale()
+
+            # Skip scheduler step if scaler skipped optimizer step (due to NaN/Inf)
+            if scale_after >= scale_before:
+                scheduler.step()
+            else:
+                tqdm.write("Warning: Scaler skipped step due to NaN/Inf gradients.")
+
             optimizer.zero_grad(set_to_none=True)
             global_step += 1
-            accum_counter = 0
+            
+            # Logging logic moved inside global_step update for smoother graphs
+            if global_step % log_interval == 0:
+                # Log average loss over the accumulation period (approximate)
+                avg = running_loss / (log_interval * grad_accum_steps)
+                # pbar.set_postfix({"loss": f"{avg:.4f}"}) # Optional UI tweak
+                if log_fn is not None:
+                    log_fn({"train/loss": avg, "train/lr": scheduler.get_last_lr()[0]}, global_step)
+                running_loss = 0.0
 
-        total_loss += loss.item() * grad_accum_steps
-        running_loss += loss.item() * grad_accum_steps
-        if (step + 1) % log_interval == 0:
-            avg = running_loss / log_interval
-            tqdm.write(f"Step {step+1}/{len(dataloader)} - loss: {avg:.4f}")
-            if log_fn is not None:
-                log_fn({"train/loss": avg}, global_step)
-            running_loss = 0.0
+            if save_every_steps and global_step % save_every_steps == 0:
+                save_fn(global_step)
 
-        if save_every_steps and global_step % save_every_steps == 0:
-            save_fn(global_step)
     return total_loss / len(dataloader), global_step
 
 
-@torch.no_grad()
+@torch.inference_mode()
 def evaluate(model: RecModelBase, dataloader: DataLoader, device: torch.device) -> float:
     model.eval()
     all_preds, all_labels = [], []
@@ -308,21 +331,21 @@ def main(config_path: str):
     for epoch in range(1, cfg["train"]["epochs"] + 1):
         def save_fn(step: int, current_epoch=epoch):
             save_path = ckpt_path / f"{run_ts}_epoch{current_epoch}_step{step}.pt"
-            torch.save(
-                {
-                    "model_state": model.state_dict(),
-                    "config": cfg,
-                    "model_config": model_cfg,
-                    "tokenizer_name": tokenizer_name,
-                    "category_vocab": train_news.category_vocab,
-                    "subcategory_vocab": train_news.subcategory_vocab,
-                    "best_auc": best_auc,
-                    "global_step": step,
-                    "epoch": current_epoch,
-                },
-                save_path,
-            )
-            tqdm.write(f"Saved periodic checkpoint to {save_path}")
+            # torch.save(
+            #     {
+            #         "model_state": model.state_dict(),
+            #         "config": cfg,
+            #         "model_config": model_cfg,
+            #         "tokenizer_name": tokenizer_name,
+            #         "category_vocab": train_news.category_vocab,
+            #         "subcategory_vocab": train_news.subcategory_vocab,
+            #         "best_auc": best_auc,
+            #         "global_step": step,
+            #         "epoch": current_epoch,
+            #     },
+            #     save_path,
+            # )
+            # tqdm.write(f"Saved periodic checkpoint to {save_path}")
 
         train_loss, global_step = train_epoch(
             model,

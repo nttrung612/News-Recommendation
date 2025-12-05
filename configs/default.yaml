@@ -6,24 +6,24 @@ data:
   dev_behaviors: data/MINDsmall_dev/behaviors.tsv
   dev_news: data/MINDsmall_dev/news.tsv
   cache_dir: data/cache
-  max_history: 25
-  max_seq_len: 48
+  max_history: 50
+  max_seq_len: 64
 
 model:
-  name: unbert  # registry key; can swap to other models later
+  name: fastformer  # registry key; can swap to other models later
   pretrained_model_name: distilbert/distilroberta-base
   tokenizer_name: distilbert/distilroberta-base
   embed_dim: 512
-  dropout: 0.1
+  dropout: 0.2
   use_token_fastformer: true  # token-level pooling instead of plain [CLS]
   category_dim: 0            # set 0 to disable category embedding
   subcategory_dim: 0         # set 0 to disable subcategory embedding
   # Fastformer depth/heads
-  token_num_layers: 8
+  token_num_layers: 3
   token_num_heads: 8
   token_ffn_mult: 4.0
-  user_num_layers: 8
-  user_num_heads: 8
+  user_num_layers: 6
+  user_num_heads: 16
   user_ffn_mult: 4.0
   use_user_positional: true
   user_max_history: 256  # should be >= data.max_history
@@ -31,24 +31,24 @@ model:
 train:
   batch_size: 32
   num_workers: 6
-  epochs: 8
-  learning_rate: 2.5e-5
+  epochs: 5
+  learning_rate: 3.0e-5
   weight_decay: 0.01
   warmup_steps: 0.1       # float <1.0 is ratio of total update steps
   neg_k: 4
   grad_accum_steps: 1
   max_grad_norm: 1.0
   fp16: true
-  sample_ratio: 0.05   # use full training data; lower (e.g., 0.1) for quick debug
-  log_interval: 200   # steps between loss logs
-  save_every_steps: 1000  # set 0 or null to disable
+  sample_ratio: 1   # use full training data; lower (e.g., 0.1) for quick debug
+  log_interval: 1000   # steps between loss logs
+  save_every_steps: 5000  # set 0 or null to disable
 
 eval:
   batch_size: 32
-  sample_ratio: 0.05   # evaluate on full dev; lower for quick debug
+  sample_ratio: 1   # evaluate on full dev; lower for quick debug
   log_train_auc: true
 
 wandb:
-  enable: true
+  enable: false
   project: news-rec
   name:
